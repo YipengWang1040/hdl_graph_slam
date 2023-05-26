@@ -13,6 +13,7 @@
 
 #include <std_msgs/Time.h>
 #include <nav_msgs/Odometry.h>
+#include <nav_msgs/Path.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
@@ -29,6 +30,9 @@
 #include <hdl_graph_slam/ScanMatchingStatus.h>
 
 namespace hdl_graph_slam {
+
+static nav_msgs::Path path;
+static ros::Publisher path_pub;
 
 class ScanMatchingOdometryNodelet : public nodelet::Nodelet {
 public:
@@ -53,6 +57,7 @@ public:
     points_sub = nh.subscribe("/filtered_points", 256, &ScanMatchingOdometryNodelet::cloud_callback, this);
     read_until_pub = nh.advertise<std_msgs::Header>("/scan_matching_odometry/read_until", 32);
     odom_pub = nh.advertise<nav_msgs::Odometry>("/odom", 32);
+    path_pub = nh.advertise<nav_msgs::Path>("/path",32);
     trans_pub = nh.advertise<geometry_msgs::TransformStamped>("/scan_matching_odometry/transform", 32);
     status_pub = private_nh.advertise<ScanMatchingStatus>("/scan_matching_odometry/status", 8);
     aligned_points_pub = nh.advertise<sensor_msgs::PointCloud2>("/aligned_points", 32);
@@ -113,13 +118,19 @@ private:
     if(!ros::ok()) {
       return;
     }
-
+    static double total_time = 0;
+    static int total_frames = 0;
+    
+    std::chrono::steady_clock::time_point tic = std::chrono::steady_clock::now();
+    
     pcl::PointCloud<PointT>::Ptr cloud(new pcl::PointCloud<PointT>());
     pcl::fromROSMsg(*cloud_msg, *cloud);
 
     Eigen::Matrix4f pose = matching(cloud_msg->header.stamp, cloud);
+    std::chrono::steady_clock::time_point toc = std::chrono::steady_clock::now();
     publish_odometry(cloud_msg->header.stamp, cloud_msg->header.frame_id, pose);
 
+    static std::ofstream out("/home/arcs/cw_hdl/time.csv");
     // In offline estimation, point clouds until the published time will be supplied
     std_msgs::HeaderPtr read_until(new std_msgs::Header());
     read_until->frame_id = points_topic;
@@ -128,6 +139,11 @@ private:
 
     read_until->frame_id = "/filtered_points";
     read_until_pub.publish(read_until);
+    double frame_time = std::chrono::duration_cast<std::chrono::nanoseconds>(toc - tic).count() / 1000000.0;
+    out << frame_time << ',' << std::endl;
+    total_time += frame_time;
+    total_frames += 1;
+    ROS_INFO("Average Time %lfms", total_time / total_frames);
   }
 
   void msf_pose_callback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& pose_msg, bool after_update) {
@@ -163,7 +179,7 @@ private:
    */
   Eigen::Matrix4f matching(const ros::Time& stamp, const pcl::PointCloud<PointT>::ConstPtr& cloud) {
     if(!keyframe) {
-      prev_time = ros::Time();
+      prev_time = keyframe_stamp;
       prev_trans.setIdentity();
       keyframe_pose.setIdentity();
       keyframe_stamp = stamp;
@@ -289,6 +305,19 @@ private:
     odom.twist.twist.angular.z = 0.0;
 
     odom_pub.publish(odom);
+    
+    geometry_msgs::PoseStamped current_pose;
+    current_pose.header = odom.header;
+    current_pose.pose.position.x = odom.pose.pose.position.x;
+    current_pose.pose.position.y = odom.pose.pose.position.y;
+    current_pose.pose.position.z = odom.pose.pose.position.z;
+    current_pose.pose.orientation.x = odom.pose.pose.orientation.x;
+    current_pose.pose.orientation.y = odom.pose.pose.orientation.y;
+    current_pose.pose.orientation.z = odom.pose.pose.orientation.z;
+    current_pose.pose.orientation.w = odom.pose.pose.orientation.w;
+    path.header = odom.header;
+    path.poses.push_back(current_pose);
+    path_pub.publish(path);
   }
 
   /**

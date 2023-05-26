@@ -636,6 +636,8 @@ private:
 
     traj_marker.points.resize(keyframes.size());
     traj_marker.colors.resize(keyframes.size());
+    
+    std::ofstream out("/home/arcs/cw_hdl/results/default.txt");
     for(int i = 0; i < keyframes.size(); i++) {
       Eigen::Vector3d pos = keyframes[i]->node->estimate().translation();
       traj_marker.points[i].x = pos.x();
@@ -647,6 +649,12 @@ private:
       traj_marker.colors[i].g = p;
       traj_marker.colors[i].b = 0.0;
       traj_marker.colors[i].a = 1.0;
+      
+      {
+          Eigen::Quaterniond q(keyframes[i]->node->estimate().rotation());
+          out<<keyframes[i]->stamp.toNSec()<<' '<<pos.x()<<' '<<pos.y()<<' '<<pos.z()<<' '
+              <<q.w()<<' '<<q.x()<<' '<<q.y()<<' '<<q.z()<<std::endl;
+      }
 
       if(keyframes[i]->acceleration) {
         Eigen::Vector3d pos = keyframes[i]->node->estimate().translation();
